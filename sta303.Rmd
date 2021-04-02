@@ -1,0 +1,394 @@
+---
+title: "sta303"
+output: pdf_document
+---
+
+
+# week2: case study
+```{r}
+gradebook_raw <-read_excel("student_data/STA101_gradebook-from-LMS.xlsx", sheet = 1)
+
+survey_raw <-read_csv("student_data/STA101_2-perc-survey.csv")
+roster <-read_csv("student_data/STA101_course-roster.csv")
+weight <-readRDS("student_data/STA101_assessment-scheme-from-syllabus.RDS")
+glimpse(gradebook_raw)
+head(survey_raw, n = 10)
+gradebook_clean <- gradebook_raw%>%janitor::clean_names() 
+#Usejanitorto clean our data
+
+gradebook_clean%>%filter(is.na(id))
+#Replace NAs with 0s
+gradebook <- gradebook_clean %>% 
+  mutate_if(is.numeric, replace_na, replace = 0)
+#Use mutate_if to replace missing values in all numeric columns with 0.
+
+survey_link <- roster%>%full_join(survey_raw, by = "email")
+#Add the survey to the gradebook
+problems <- survey_link %>% 
+  filter(is.na(name)| is.na(email))
+survey <- survey_raw %>% 
+  mutate(email =str_replace(email, "myuniedu", "myuni.edu"))
+survey_full <- roster %>% 
+  right_join(survey)
+survey_final <- survey_full %>% 
+  mutate(survey = 1)
+
+gradebook_wsurv <- gradebook %>% 
+  full_join(survey_final) %>% 
+  mutate(survey =replace_na(survey, 0)) %>% 
+  select(-name,-email)
+
+grades_weighted <- gradebook_long%>%mutate(assessment_type = case_when(str_detect(assessment, "problem")~"Problem sets",assessment=="survey"~"2 percent survey",TRUE~ str_to_sentence(str_replace_all(assessment, "_", " ")))) %>% 
+mutate(assessment_type =str_remove(assessment_type, "\\s\\d*$")) %>% left_join(weight, by =c("assessment_type" = "assessment")) %>% group_by(student_name, id, tutorial_group, assessment_type, percentage) %>% summarise(grade_by_type =mean(grade/out_of), .groups = "drop") %>% group_by(student_name, id, tutorial_group) %>% 
+summarise(total =sum(percentage*grade_by_type), .groups = "drop")
+
+adjust_GPA_thresh <-function(x){thresh <-c(89, 84, 79, 76, 72, 69, 66, 62, 59, 56, 52, 49)ifelse(round(x)%in%thresh,round(x)+1,round(x))}
+
+grades_adjusted <- grades_weighted %>% 
+  mutate(grade_adj =adjust_GPA_thresh(total))
+
+grades_adjusted %>% 
+  select(id, grade_adj, tutorial_group) %>% 
+  group_by(tutorial_group) %>% 
+  group_walk(~ write_csv(.x,str_c("student_data/STA101_", .y$tutorial_group， "_grades-for-submission.c")
+
+p <- grades_adjusted %>% 
+  ggplot(aes(x = grade_adj))+geom_histogram 
+grades_adjusted %>% 
+  count(tutorial_group, grade_adj) %>% 
+  ggplot(aes(x = grade_adj, y = n, fill = tutorial_group)) + 
+  geom_bar(stat = "identity")+scale_x_continuous(limits =c(0,100))
++ theme_minimal() + labs(title = "STA101 grade distribution by tutorial group",subtitle = "Winter 2023",x = "Grade (percentage)",y = "Number of students",
+caption =str_c("Prepared by the Head TA\n",Sys.Date()))+theme(legend.title=element_blank(), legend.position =c(0.15, 0.75)) + scale_y_continuous(limits =c(0, 45), breaks =seq(0,45, by = 5)) + scale_fill_brewer
+#visuiallzation 
+
+summary(lm(grade_adj~tutorial_group, data = grades_adjusted))
+
+grades_adjusted %>% 
+  count(tutorial_group, grade_adj) %>% 
+  ggplot(aes(x = grade_adj, y = n, 
+             fill = tutorial_group)) + 
+  geom_bar(stat="identity") + 
+  scale_x_continuous(limits =c(0,100)) + 
+  facet_wrap(~tutorial_group) + 
+  theme_minimal() + 
+  theme(legend.position = "none")
+
+grades_adjusted %>% 
+  ggplot(aes(x = grade_adj, colour = tutorial_group)) + 
+  geom_boxplot() + 
+  scale_x_continuous(limits =c(0, 100)) + 
+  facet_wrap(~tutorial_group) + 
+  theme_minimal() + 
+  theme(legend.position = "none", axis.text.y =element_blank()) + 
+  labs(x = "Final grade") 
+
+reordered <- grades_adjusted %>% 
+  count(tutorial_group, grade_adj) %>% 
+  mutate(tutorial_group =fct_rev(tutorial_group))table(reordered$tutorial_group)
+
+reordered %>% 
+  ggplot(aes(x = grade_adj, colour = tutorial_group)) + 
+  geom_boxplot() + 
+  scale_x_continuous(limits =c(0, 100)) + 
+  facet_wrap(~tutorial_group) + 
+  theme_minimal() + 
+  theme(legend.position = "none",axis.text.y =element_blank())+labs(x = "Final grade")
+
+reordered <- grades_adjusted %>% 
+  count(tutorial_group, grade_adj) %>% 
+  mutate(tutorial_group = 
+           fct_relevel(tutorial_group, "TUT0201", after =2))
+table(reordered$tutorial_group)
+
+reordered %>% 
+  ggplot(aes(x = grade_adj, colour = tutorial_group)) + 
+  geom_boxplot() + 
+  scale_x_continuous(limits =c(0, 100)) +
+  facet_wrap(~tutorial_group) + 
+  theme_minimal()+
+  theme(legend.position = "none",axis.text.y =element_blank()) + 
+  labs(x = "Final grade")
+
+```
+
+# week3 
+## we talk about statitical communication, how can we analyze data, and how we can get data in an ethic way.
+
+# week4
+## we talk about Maximum likelihood this week, and fixed effect random effect, mixed effect model, nested / nesting, crossed effects, observational units, grouping units, 'level-one' or 'level-two' covariates/observational units, then we have the case study about MLE
+```{r}
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(lme4)
+library(ICC)
+library(knitr)
+library(tidyverse)
+pi_1a <- rep(0.5, 24)
+count_1a <- rbinom(24, 10, pi_1a)
+
+pi_1b <- rbeta(24,.5,.5)  
+count_1b <- rbinom(24, 10, pi_1b)
+
+set.seed(1)
+
+dose <- c(rep(0,6),rep(1,6),rep(2,6),rep(3,6))
+
+pi_2a <- exp(-2+4/3*dose)/(1+exp(-2+4/3*dose))
+count_2a <- rbinom(24, 10, pi_2a)
+
+b <- 2
+a <- b*pi_2a / (1-pi_2a)
+pi_2b <- rbeta(24, a, b)
+count_2b <- rbinom(24, 10, pi_2b)  
+tube_linear <- lm(growth_yr1 ~ tubes, data = treetubes_yr1)
+```
+
+# week 5
+This week we learn to Identify situations where linear mixed models may be needed. Create plots and summaries to explore hierarchical data.Write the formula for LMMs. Fit LMMs with the lmer function using random slopes and random intercepts, as appropriate.interpret the results of lmer outputs. Conduct appropriate tests to compare LMMs.
+```{r}
+library(MASS)
+library(gridExtra)  
+library(mnormt) 
+library(lme4) 
+library(knitr) 
+library(kableExtra)
+library(tidyverse)
+modelc0 <- lm(na ~ orch + large + orch:large, data = music)
+regr.id22 = lm(na ~ large, data = id22)
+model.b <- lmer(na ~ large +  (large | id), data = music)
+model.c2 <- lmer(na ~ orch + large + orch:large +
+  (1|id), data = music)
+model.d <- lmer(na ~ orch + mpqnem + large + orch:large + 
+  mpqnem:large + (large | id), data = music)
+# anova() automatically uses ML for LRT tests
+drop_in_dev <- anova(model.d, model.c, test = "Chisq")
+drop_in_dev <- anova(model.d, model.d1, test = "Chisq")
+model.e <- lmer(na ~ orch + cmpqnem + large + orch:large + 
+  cmpqnem:large + (large | id), REML = T, data = music)
+model.f <- lmer(na ~ previous + students + juried + 
+    public + solo + mpqpem + mpqab + orch + mpqnem + 
+    mpqnem:solo + (previous + students + juried + 
+    public + solo | id), REML = T, data = music)
+model0 <- lmer(na ~ orch + large + orch:large +
+  (large | id), REML = T, data = music)
+summary(model0)
+
+```
+
+# week 6 reading week
+
+# week 7 (no case study for r) 
+
+## Recognize a form of the probability density function for Bernoulli, binomial, negative binomial, Poisson, gamma and beta.Identify how changing values for a parameter affects the characteristics of the probability distribution.Identify the mean and variance for each distribution.Match the response for a study to a plausible random variable and provide reasons for ruling out other random variables.Match a histogram of sample data to plausible distributions. create tables and calculate joint, marginal and conditional probabilities with them.Calculate odds, risks, odds ratios (OR) and risk ratios (RR).Understand why ORs and RRs are similar for rare outcomes. State the assumptions of GLMs. Describe the thee components of a GLM. Interpret logistic regression output (more next week!).
+
+# week 8  
+
+## Logistic regression, Poisson regression
+```{r}
+# Case Study: Weekend Drinking
+head(zip.data[2:5])
+pois.m1 <- glm(drinks ~ off.campus + sex, family = poisson,
+               data = zip.data)
+# Exponentiated coefficients
+exp(coef(pois.m1))
+# Goodness-of-fit test
+gof.pvalue = 1 - pchisq(pois.m1$deviance, pois.m1$df.residual)
+gof.pvalue
+
+zip.m2 <- zeroinfl(drinks ~ off.campus + sex | firstYear, 
+                   data = zip.data)
+exp(coef(zip.m2))   # exponentiated coefficients
+vuong(pois.m1, zip.m2)
+```
+
+# week 9 (lite week)
+
+# week 10
+## Generalised linear mixed models and conditional logistic regression
+```{r}
+#Case Study: College Basketball Referees
+# Logistic regression model (not multilevel)
+mod0 = glm(foul.home ~ foul.diff + score.diff + lead.home + 
+           time + foul.diff:time + lead.home:time, 
+           family = binomial, data = refdata)
+lreg.game110 <- glm(foul.home ~ foul.diff, 
+                    family = binomial, data = game110)
+# Multilevel model with only foul.diff and errors on slope 
+#   and int and 1 RE
+model.b1 <- glmer(foul.home ~ foul.diff + (foul.diff|game),
+                  family = binomial, data = refdata)
+# Logistic regression model (not multilevel) with 
+#   only foul.diff
+mod0a <- glm(foul.home ~ foul.diff, family = binomial, 
+             data = refdata)
+# Model A3
+model.a3 <- glmer(foul.home ~ foul.diff + (1|game) + 
+    (1|hometeam) + (1|visitor), 
+    family = binomial, data = refdata)
+drop_in_dev <- anova(model.a3, model.a1, test = "Chisq")
+bootstrapAnova(mA=model.a3, m0=model.a1, B=1000)
+bootstrapAnova(mA=model.b3, m0=model.a3, B=1000)
+# Get estimated random effects based on Model F
+re.int <- ranef(model.f)$`game`[["(Intercept)"]]
+hist(re.int, xlab = "Random Effect", 
+     main = "Random Effects for Game")
+Home.re <- ranef(model.f)$`hometeam`[["(Intercept)"]]
+hist(Home.re, xlab = "Random Effect", 
+     main = "Random Effects for Home Team")
+Visiting.re <- ranef(model.f)$`visitor`[["(Intercept)"]]
+hist(Visiting.re, xlab = "Random Effect",
+  main = "Random Effects for the Visiting Team",
+  xlim = c(-0.5,0.5))
+cbind(Home.re, Visiting.re)   # 39x2 matrix of REs by team
+
+# Prediction intervals for random effects based on Model F
+ranef1 <- dotplot(ranef(model.f, postVar = TRUE), 
+                  strip = FALSE)
+print(ranef1[[3]], more = TRUE) ##HOME
+print(ranef1[[2]], more = TRUE) ##VIS
+print(ranef1[[1]], more = TRUE)
+```
+
+# week 11
+
+## Generalised additive models.
+```{r}
+#GAM case study: Portugese larks
+library(gamair) # you may need to install this
+library(ggplot2)
+library(dplyr)
+library(ggthemes)
+library(mgcv)
+data(bird)
+glimpse(bird)
+bird <- transform(bird,
+            crestlark = factor(crestlark),
+            linnet = factor(linnet),
+            e = x / 1000,
+            n = y / 1000)
+head(bird)
+ggplot(bird, aes(x = e, y = n, colour = crestlark)) + 
+  geom_point(size = 0.5) + 
+  coord_fixed() + 
+  scale_colour_discrete(na.value = '#bbbbbb33') + 
+  labs(x = NULL, y = NULL) +
+  theme_map() +
+  theme(legend.position = "bottom")
+crest <- gam(crestlark ~ s(e, n, k = 100),
+             data = bird,
+             family = binomial,
+             method = 'REML')
+## convert back to numeric
+bird <- transform(bird,
+                  crestlark = as.numeric(as.character(crestlark)),
+                  linnet = as.numeric(as.character(linnet)))
+## some variables to help aggregation
+bird <- transform(bird, tet.n = rep(1, nrow(bird)),
+                  N = rep(1, nrow(bird)), stringsAsFactors = FALSE)
+## set to NA if not surveyed
+bird$N[is.na(as.vector(bird$crestlark))] <- NA
+## aggregate
+bird2 <- aggregate(data.matrix(bird), by = list(bird$QUADRICULA),
+                   FUN = sum, na.rm = TRUE)
+## scale by Quads aggregated
+bird2 <- transform(bird2, e = e / tet.n, n = n / tet.n)
+## fit binomial GAM
+crest2 <- gam(cbind(crestlark, N - crestlark) ~ s(e, n, k = 100),
+              data = bird2, family = binomial, method = 'REML')
+crest3 <- gam(cbind(crestlark, N - crestlark) ~
+                  s(e, n, k = 100),
+              data = bird2, family = quasibinomial,
+              method = 'REML')
+ggplot(data.frame(Fitted = fitted(crest2),
+                  Resid = resid(crest2)),
+       aes(Fitted, Resid)) + 
+  geom_point() +
+  theme_minimal()
+library(gratia)
+appraise(crest3)
+gam.check(crest3)
+
+#GAM case study: Cherry trees
+library(ggplot2)
+library(dplyr)
+data('trees', package='datasets')
+head(trees)
+trees %>% 
+  rename(Diameter = "Girth") %>% 
+  ggplot(aes(Diameter, Volume, color=Height)) +
+  geom_point() + 
+  theme_minimal() +
+  ggtitle("Diameter and volume for cherry trees, coloured by height")
+
+
+trees %>% 
+  rename(Diameter = "Girth") %>% 
+  ggplot(aes(Height, Volume, color=Diameter)) +
+  geom_point() + theme_minimal() +
+    ggtitle("Height and volume for cherry trees, coloured by diameter")
+reps <- 50000
+nexps <- 5
+rate <- 0.1
+set.seed(0)
+x1 <- replicate(reps, sum(rexp(n=nexps, rate=rate)))
+
+colors <- c("shape = 5, rate = 0.1" = "blue", 
+            "shape = 2, rate = 0.1" = "red", 
+            "shape = 5, rate = 1" = "orange", 
+            "shape = 20, rate = 1" = "green")
+
+
+ggplot(data.frame(x1), aes(x1)) + 
+    scale_color_manual(values = colors) +
+stat_function(fun=function(x)dgamma(x, shape=5, scale=1/0.1), aes(color="shape = 5, rate = 0.1"), size=1) +
+  stat_function(fun=function(x)dgamma(x, shape=2, scale=1/0.1), aes(color="shape = 2, rate = 0.1"), size=1) +
+    stat_function(fun=function(x)dgamma(x, shape=5, scale=1), aes(color="shape = 5, rate = 1"), size=1) +
+  stat_function(fun=function(x)dgamma(x, shape=20, scale=1), aes(color="shape = 20, rate = 1"), size=1) +
+  theme_minimal() +
+      labs(x = "x",
+         y = "y",
+         color = "Parameters",
+         title = "Example Gamma pdf") 
+library(MASS)
+library(mgcv)
+library(gratia) # ggplot style 
+
+data(trees)
+
+ct1<-gam(Volume~s(Height)+s(Girth), family=Gamma(link="log"),data=trees, select=TRUE, method="REML")
+summary(ct1)
+coef(ct1)
+gam.check(ct1)
+gratia::appraise(ct1)
+par(mfrow=c(1,2))
+vis.gam(ct1, view=c("Girth", "Height"))
+vis.gam(ct1, view=c("Height", "Girth"))
+res1 <-gam(Volume~s(Girth, k=3), 
+           family=Gamma(link="log"), data=trees)
+res2 <-gam(Volume~s(Girth,k=15),
+           family=Gamma(link="log"), data=trees)
+res3 <-gam(Volume~s(Girth, k=25),
+           family=Gamma(link="log"), data=trees)
+
+par(mfrow=c(1, 3))
+plot(res1)
+plot(res2)
+plot(res3)
+ct1_ml <- gam(Volume~s(Height) + s(Girth), family=Gamma(link="log"), data=trees, method="ML")
+ct2_ml <- gam(Volume ~ Height + s(Girth),  family=Gamma(link="log"),  data = trees, method = "ML")
+ct3_ml <- gam(Volume ~ s(Girth), family=Gamma(link="log"), data = trees, method = "ML")
+
+lmtest::lrtest(ct1_ml, ct2_ml) 
+lmtest::lrtest(ct2_ml, ct3_ml)
+trees$pred <- predict(ct1, type="response")
+
+trees %>% 
+  ggplot(aes(Volume, pred)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  theme_minimal() +
+  labs(x = "Observed volume", y = "Predicted volume")
+```
+
